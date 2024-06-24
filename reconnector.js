@@ -1,101 +1,124 @@
 const mineflayer = require('mineflayer')
 const { mineflayer: mineflayerViewer } = require('prismarine-viewer')
+const net = require('net')
 
-if (process.argv.length < 4 || process.argv.length > 6) {
-    console.log('Usage : node reconnector.js <host> <port> [<name>] [<password>]')
+if (process.argv.length < 4 || (process.argv.length - 4) % 3 !== 0) {
+    console.log('Usage : node reconnector.js <host> <port> [<name1> <password1> <viewerPort1> ... <nameN> <passwordN> <viewerPortN>]')
     process.exit(1)
 }
 
-// Variable to store the view server instance
-let viewerServer = null;
-let viewerPort = 3007; // start port for viewer
+const host = process.argv[2]
+const port = parseInt(process.argv[3])
 
-function createBot() {
-    const bot = mineflayer.createBot({
-        host: process.argv[2],
-        port: parseInt(process.argv[3]),
-        username: process.argv[4] ? process.argv[4] : 'reconnector',
-        password: process.argv[5]
+const botConfigs = []
+for (let i = 4; i < process.argv.length; i += 3) {
+    botConfigs.push({
+        username: process.argv[i],
+        password: process.argv[i + 1],
+        viewerPort: parseInt(process.argv[i + 2])
     })
-
-    return bot
 }
 
-function setupBot(bot) {
+function createBot(config) {
+    return mineflayer.createBot({
+        host: host,
+        port: port,
+        username: config.username,
+        password: config.password
+    })
+}
+
+function isPortAvailable(port, callback) {
+    const server = net.createServer()
+    server.once('error', err => {
+        if (err.code === 'EADDRINUSE') {
+            callback(false)
+        } else {
+            callback(true)
+        }
+    })
+    server.once('listening', () => {
+        server.close()
+        callback(true)
+    })
+    server.listen(port)
+}
+
+function setupBot(config) {
+    let bot = createBot(config)
     let connected = false
     let viewer = false
+    let viewerServer = null
 
     bot.on('spawn', () => {
-        console.log("SPAWNED")
+        console.log(`${config.username} SPAWNED`)
         if (!viewer) {
-            console.log('noview')
-            // Trying to create a view server
-            try {
-                viewerServer = mineflayerViewer(bot, { port: viewerPort, firstPerson: false }) // using viewerPort variable
-                bot.chat('/speedrun')
-                viewer = true
-            } catch (err) {
-                console.log('Error starting viewer:', err)
+            console.log(`${config.username} no view`)
+            const tryStartingViewer = (port) => {
+                isPortAvailable(port, (available) => {
+                    if (available) {
+                        try {
+                            viewerServer = mineflayerViewer(bot, { port: port, firstPerson: false })
+                            bot.chat('/login chunkloaderk1')
+                            bot.chat('/login chunkloaderk')
+                            viewer = true
+                            console.log(`${config.username} viewer started on port ${port}`)
+                        } catch (err) {
+                            console.log(`${config.username} Error starting viewer:`, err)
+                        }
+                    } else {
+                        console.log(`${config.username} Port ${port} in use, trying next port`)
+                        tryStartingViewer(port + 1)
+                    }
+                })
             }
+            tryStartingViewer(config.viewerPort)
         }
 
         if (viewer) {
             bot.chat('/tp charonchikBaby')
             setInterval(() => {
                 bot.chat('/login chunkloaderk')
-                console.log('logIN ')
-            }, 50000)
+                console.log(`${config.username} logIN `)
+            }, 5000)
 
             bot.on("windowOpen", window => {
                 if (connected) {
-                    console.log("random_click")
+                    console.log(`${config.username} random_click`)
                     bot.clickWindow(3, 0, 0)
                     bot.clickWindow(2, 0, 0)
                 }
                 if (!connected) {
-                    console.log("connect")
+                    console.log(`${config.username} connect`)
                     bot.clickWindow(15, 0, 0)
                     connected = true
                 }
-
-                //console.log(window)
             })
         }
     })
 
-    // Bot disconnect event handler
     bot.on('end', () => {
-        console.log('Bot disconnected, reconnecting in 5 seconds...')
+        console.log(`${config.username} Bot disconnected, reconnecting in 5 seconds...`)
         if (viewerServer) {
-            // Closing the view server before reconnecting
             viewerServer.close()
             viewerServer = null
         }
         setTimeout(() => {
-            // Increase the port by 1 to avoid conflict
-            viewerPort += 1
-            bot = createBot()
-            setupBot(bot)
-        }, 5000) // 5 seconds before reconnecting
+            setupBot(config)
+        }, 50000)
     })
 
-    // Bot error event handler
     bot.on('error', err => {
-        console.log('Error:', err)
-        console.log('Reconnecting in 5 seconds...')
+        console.log(`${config.username} Error:`, err)
+        console.log(`${config.username} Reconnecting in 5 seconds...`)
         if (viewerServer) {
-            // Closing the view server on error
             viewerServer.close()
             viewerServer = null
         }
         setTimeout(() => {
-            // Increase the port by 1 to avoid conflict
-            viewerPort += 1
-            bot = createBot()
-            setupBot(bot)
-        }, 5000) // 5 seconds before reconnecting
+            setupBot(config)
+        }, 50000)
     })
 }
 
-let bot = createBot()
-setupBot(bot)
+botConfigs.forEach(config => setupBot(config))
